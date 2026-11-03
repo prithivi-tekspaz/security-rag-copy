@@ -1,0 +1,15 @@
+[package]
+name = "security_rag"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lints.rust]
+# keep simple; no workspace inheritance
+unsafe_code = "forbid"
+
+[dependencies]
+rig = { version = "0.44", features = ["derive", "pdf"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
