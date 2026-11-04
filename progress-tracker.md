@@ -9,9 +9,9 @@ Each checkbox tracks one task.
 - [x] Step C - Apply recommended generation parameters
 - [x] Step D - Update agent preamble to Security RAG identity
 - [x] Step E - Add identity test (Who are you? -> Security RAG)
-- [ ] Step F - Add security-focused RAG corpus in docs/
-- [ ] Step G - Add unit tests for chunking
-- [ ] Step H - Run end-to-end and verify quality
+- [x] Step F - Add security-focused RAG corpus in docs/
+- [x] Step G - Add unit tests for chunking
+- [x] Step H - Run end-to-end and verify quality
 - [ ] Step I - Commit and push
 
 ## In Progress
