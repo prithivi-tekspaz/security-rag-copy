@@ -20,6 +20,23 @@ struct Document {
     content: String,
 }
 
+/// Splits text content into chunks of at most `chunk_size` characters along whitespace boundaries.
+pub fn chunk_text(content: &str, chunk_size: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for word in content.split_whitespace() {
+        if current.len() + word.len() + 1 > chunk_size && !current.is_empty() {
+            chunks.push(std::mem::take(&mut current).trim().to_string());
+        }
+        current.push_str(word);
+        current.push(' ');
+    }
+    if !current.is_empty() {
+        chunks.push(current.trim().to_string());
+    }
+    chunks
+}
+
 fn load_pdf(path: &Path) -> Result<Vec<String>> {
     const CHUNK_SIZE: usize = 2000;
     let content_chunks = PdfFileLoader::with_glob(path.to_str().context("Invalid path")?)?
@@ -33,21 +50,7 @@ fn load_pdf(path: &Path) -> Result<Vec<String>> {
                 })
                 .ok()
         })
-        .flat_map(|content| {
-            let mut chunks = Vec::new();
-            let mut current = String::new();
-            for word in content.split_whitespace() {
-                if current.len() + word.len() + 1 > CHUNK_SIZE && !current.is_empty() {
-                    chunks.push(std::mem::take(&mut current).trim().to_string());
-                }
-                current.push_str(word);
-                current.push(' ');
-            }
-            if !current.is_empty() {
-                chunks.push(current.trim().to_string());
-            }
-            chunks
-        })
+        .flat_map(|content| chunk_text(&content, CHUNK_SIZE))
         .collect::<Vec<_>>();
     if content_chunks.is_empty() {
         anyhow::bail!("No content found in PDF file: {}", path.display());
@@ -68,7 +71,7 @@ async fn main() -> Result<()> {
         "nomic-embed-text".to_string()
     };
     let completion_model_name = std::env::var("COMPLETION_MODEL")
-        .unwrap_or_else(|_| "tinyllama".to_string());
+        .unwrap_or_else(|_| "CyberCrew/notmythos-8b:latest".to_string());
 
     let embedding_model = client.embedding(&embed_model_name, None).erase();
 
@@ -115,4 +118,84 @@ async fn main() -> Result<()> {
     chatbot.run().await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chunk_text_empty_string() {
+        let chunks = chunk_text("", 100);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_text_whitespace_only() {
+        let chunks = chunk_text("   \n\t   \r\n  ", 100);
+        assert!(chunks.is_empty());
+    }
+
+    #[test]
+    fn test_chunk_text_short_content() {
+        let text = "OWASP Top 10: Broken Access Control.";
+        let chunks = chunk_text(text, 100);
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], text);
+    }
+
+    #[test]
+    fn test_chunk_text_splits_at_word_boundary() {
+        let words = vec!["vulnerability"; 20];
+        let text = words.join(" ");
+        // Each word is 13 chars + 1 space = 14 chars. Chunk size 50 fits 3 words (41 chars).
+        let chunks = chunk_text(&text, 50);
+
+        assert!(chunks.len() > 1);
+        for chunk in &chunks {
+            // No chunk should exceed the max chunk size unless a single word is larger
+            assert!(chunk.len() <= 50, "Chunk exceeded size limit: {}", chunk.len());
+            // No words should be split in half
+            for word in chunk.split_whitespace() {
+                assert_eq!(word, "vulnerability");
+            }
+        }
+    }
+
+    #[test]
+    fn test_chunk_text_single_word_longer_than_chunk_size() {
+        let long_token = "A".repeat(120);
+        let chunks = chunk_text(&long_token, 50);
+        // A single long token should still be captured rather than lost or panicking
+        assert_eq!(chunks.len(), 1);
+        assert_eq!(chunks[0], long_token);
+    }
+
+    #[test]
+    fn test_chunk_text_retains_all_words() {
+        let text = "SQL injection occurs when untrusted data is sent to an interpreter as part of a command or query.";
+        let original_words: Vec<&str> = text.split_whitespace().collect();
+
+        let chunks = chunk_text(text, 30);
+        let reconstructed_words: Vec<&str> = chunks
+            .iter()
+            .flat_map(|c| c.split_whitespace())
+            .collect();
+
+        assert_eq!(original_words, reconstructed_words);
+    }
+
+    #[test]
+    fn test_load_pdf_with_existing_docs() {
+        let docs_dir = std::path::Path::new("docs");
+        if docs_dir.exists() {
+            let result = load_pdf(&docs_dir.join("*.pdf"));
+            if let Ok(chunks) = result {
+                assert!(!chunks.is_empty(), "Expected non-empty chunks from docs");
+                for chunk in chunks {
+                    assert!(!chunk.trim().is_empty());
+                }
+            }
+        }
+    }
 }
