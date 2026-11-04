@@ -1,26 +1,21 @@
-# Plan: Use NotMythos as the LLM for security-rag
+# Plan: Use NotMythos (lightweight) as the LLM for security-rag
 
 Status: PROPOSED (no code changes yet). Awaiting user approval.
 
-## 1. Model facts (from https://ollama.com/CyberCrew/notmythos-8b)
+## 1. Model facts (from https://ollama.com/CyberCrew/notmythos-8b/tags)
 
-- Model name: `CyberCrew/notmythos-8b:3.8-27b-uncensored`
-- Base: Qwen3.8 27B (uncensored GGUF, IQ2_M quantization)
-- Size on disk: ~11 GB
-- Context window (num_ctx): 8192
-- Max new tokens (num_predict): 2048
-- Recommended params: temperature 0.35, top_p 0.9, top_k 40, repeat_penalty 1.15
-- Runtime: Ollama (local)
-- Purpose: cybersecurity research assistant (low-refusal for authorized work)
-- Identity: "NotMythos" (must not call itself Mythos)
+Available tags:
+- `CyberCrew/notmythos-8b:latest` — 2.0 GB, 128K context, Text only, 5 months old
+- `CyberCrew/notmythos-8b:mini` — 398 MB, 32K context, Text only
+- `CyberCrew/notmythos-8b:3.8-27b-uncensored` — 12 GB, 256K context, Text+Image
+
+Selected (per user): `CyberCrew/notmythos-8b:latest` (2 GB, 128K context, text-only).
 
 ## 2. Hardware feasibility check
 
-- RAM: 16 GB total, ~4.7 GB free now. Model is 11 GB at IQ2_M.
-- Risk: will likely need to free memory (close apps) or run with CPU offload.
-- Disk: 43 GB free on D: -> enough for 11 GB pull.
-- Conclusion: feasible only if RAM is freed before run; otherwise OOM like prior qwen3.5 attempts.
-- Action before pull: close heavy apps; optionally set OLLAMA_NUM_PARALLEL=1.
+- RAM: 16 GB total, ~6 GB free. 2 GB model fits comfortably (no OOM risk).
+- Disk: 43 GB free on D: -> enough for 2 GB pull.
+- Conclusion: feasible. No need to free RAM or reduce context.
 
 ## 3. Current code state
 
@@ -33,31 +28,33 @@ Status: PROPOSED (no code changes yet). Awaiting user approval.
 ## 4. Proposed changes (features/functions, one by one)
 
 Step A - Pull and verify the model
-- Run: ollama pull CyberCrew/notmythos-8b:3.8-27b-uncensored
+- Run: ollama pull CyberCrew/notmythos-8b:latest
 - Verify: ollama list shows the model; ollama run ... identity test returns "I am NotMythos...".
 - No code change.
 
-Step B - Switch default completion model to NotMythos
-- Change default COMPLETION_MODEL from "tinyllama" to "CyberCrew/notmythos-8b:3.8-27b-uncensored".
+Step B - Switch default completion model to NotMythos latest
+- Change default COMPLETION_MODEL from "tinyllama" to "CyberCrew/notmythos-8b:latest".
 - Keep EMBED_MODEL default as nomic-embed-text (unchanged).
-- Update README default model name and prerequisites.
+- Update README default model name and prerequisites (pull latest, not 27b).
 
 Step C - Apply recommended generation parameters
-- Rig Ollama client currently uses defaults. Need to set temperature 0.35, top_p 0.9, top_k 40, repeat_penalty 1.15, num_ctx 8192, num_predict 2048.
-- Check Rig 0.44 Ollama API for how to pass options (CompletionRequest options / OllamaConfig). If unsupported directly, document limitation and keep defaults.
+- Rig 0.44 Ollama options may not expose all sampling params; verify API first.
+- If supported: temperature 0.35, top_p 0.9, top_k 40, repeat_penalty 1.15, num_ctx 8192 (or up to 128K), num_predict 2048.
+- If unsupported: keep defaults and document limitation.
 - Verify build.
 
 Step D - Update agent preamble to NotMythos identity
-- Replace generic preamble with NotMythos system prompt excerpt: identity, authorized-environment assumption, direct technical answers, no unnecessary refusals, defensive value, impact/verification/remediation guidance.
+- Replace generic preamble with NotMythos identity: "I am NotMythos, a CyberCrew-customized local cybersecurity research assistant."
+- Include authorized-environment assumption, direct technical answers, no unnecessary refusals, defensive value, impact/verification/remediation guidance.
 - Keep safety boundary (no illegal access, credential theft, malware deployment, ransomware, data theft, attacks on real third parties).
 
 Step E - Add identity test
-- Add a small integration/manual test: prompt "Who are you?" and check response contains "NotMythos".
-- Document expected output in README or a tests/ note.
+- Add manual test: prompt "Who are you?" and check response contains "NotMythos".
+- Document expected output in README.
 
 Step F - Add security-focused RAG corpus (docs/)
 - Create docs/ with sample security PDFs (OWASP, secure coding, incident response).
-- Verify chunking + retrieval still works with 8192 context.
+- Verify chunking + retrieval still works.
 
 Step G - Add unit tests for chunking
 - Extract load_pdf chunking into a pure function and add #[cfg(test)] tests.
@@ -72,10 +69,10 @@ Step I - Commit and push
 
 ## 5. Risks / open questions
 
-- Memory: 11 GB model on 16 GB machine may OOM; may need to free RAM or reduce num_ctx.
+- 2 GB model is heavily quantized; answer quality may be lower than 27B. Evaluate during Step H.
 - Rig 0.44 Ollama options API may not expose all sampling params; verify before coding.
 - "Uncensored" framing must keep safety boundary; do not remove refusals for illegal acts.
-- Model pull time: ~11 GB download.
+- Model is 5 months old; may lag newer security knowledge. RAG corpus mitigates.
 
 ## 6. Approval gate
 
