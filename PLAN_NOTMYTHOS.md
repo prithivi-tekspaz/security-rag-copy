@@ -29,7 +29,7 @@ Selected (per user): `CyberCrew/notmythos-8b:latest` (2 GB, 128K context, text-o
 
 Step A - Pull and verify the model
 - Run: ollama pull CyberCrew/notmythos-8b:latest
-- Verify: ollama list shows the model; ollama run ... identity test returns "I am NotMythos...".
+- Verify: ollama list shows the model; ollama run ... identity test returns "I am Security RAG...".
 - No code change.
 
 Step B - Switch default completion model to NotMythos latest
@@ -43,13 +43,13 @@ Step C - Apply recommended generation parameters
 - If unsupported: keep defaults and document limitation.
 - Verify build.
 
-Step D - Update agent preamble to NotMythos identity
-- Replace generic preamble with NotMythos identity: "I am NotMythos, a CyberCrew-customized local cybersecurity research assistant."
+Step D - Update agent preamble to Security RAG identity
+- Replace generic preamble with Security RAG identity:  "I am Security RAG, a local cybersecurity research assistant."
 - Include authorized-environment assumption, direct technical answers, no unnecessary refusals, defensive value, impact/verification/remediation guidance.
 - Keep safety boundary (no illegal access, credential theft, malware deployment, ransomware, data theft, attacks on real third parties).
 
 Step E - Add identity test
-- Add manual test: prompt "Who are you?" and check response contains "NotMythos".
+- Add manual test: prompt "Who are you?" and check response contains "Security RAG".
 - Document expected output in README.
 
 Step F - Add security-focused RAG corpus (docs/)
