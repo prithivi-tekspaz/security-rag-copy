@@ -4,17 +4,17 @@ Each checkbox tracks one task.
 
 ## To Do
 
-- [ ] Add security documents to the docs folder.
-- [ ] Add unit tests for chunking.
+- [ ] Step A - Pull and verify model CyberCrew/notmythos-8b:latest
+- [ ] Step B - Switch default completion model to NotMythos latest
+- [ ] Step C - Apply recommended generation parameters
+- [ ] Step D - Update agent preamble to Security RAG identity
+- [ ] Step E - Add identity test (Who are you? -> Security RAG)
+- [ ] Step F - Add security-focused RAG corpus in docs/
+- [ ] Step G - Add unit tests for chunking
+- [ ] Step H - Run end-to-end and verify quality
+- [ ] Step I - Commit and push
 
 ## In Progress
 
 ## Done
 
-- [x] Add a README with run steps.
-- [x] Set up the Rust workspace.
-- [x] Add the rig dependency.
-- [x] Implement the context agent.
-- [x] Run cargo check.
-- [x] Run cargo build.
-- [x] Run the security RAG agent end to end.
