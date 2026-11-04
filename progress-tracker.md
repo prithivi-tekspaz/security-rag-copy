@@ -12,7 +12,7 @@ Each checkbox tracks one task.
 - [x] Step F - Add security-focused RAG corpus in docs/
 - [x] Step G - Add unit tests for chunking
 - [x] Step H - Run end-to-end and verify quality
-- [ ] Step I - Commit and push
+- [x] Step I - Commit and push
 
 ## In Progress
 
