@@ -109,7 +109,7 @@ async fn main() -> Result<()> {
     let index = vector_store.index(embedding_model);
 
     let rag_agent = AgentBuilder::new(client.completion(&completion_model_name))
-        .preamble("You are a security assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context. Cite relevant concepts when possible.")
+        .preamble("You are Security RAG, a local cybersecurity research assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context. Be direct, practical, and technical. Include impact, verification approach, and remediation. Cite relevant concepts when possible.")
         .dynamic_context(2, index)
         .build();
 
