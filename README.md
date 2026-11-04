@@ -30,7 +30,7 @@ flowchart TD
         H["User Question at > prompt"] --> I["Dynamic Retrieval (Top 2 chunks)"]
         G -.->|Similarity Search| I
         I --> J["AgentBuilder with Security Preamble"]
-        J --> K["Ollama Completion (tinyllama)"]
+        J --> K["Ollama Completion (CyberCrew/notmythos-8b:latest)"]
         K --> L["Security Answer in CLI (up to 10 turns)"]
     end
 ```
@@ -56,7 +56,7 @@ flowchart TD
 
 5. **Security Agent & Interactive Chatbot**:
    - The RAG agent is instantiated with a security expert system preamble (`You are a security assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context...`).
-   - For every question, the agent dynamically retrieves the top 2 most relevant context chunks and passes them to the completion model (`tinyllama` by default).
+   - For every question, the agent dynamically retrieves the top 2 most relevant context chunks and passes them to the completion model (`CyberCrew/notmythos-8b:latest` by default).
    - An interactive CLI session allows up to 10 turns of dialogue per execution.
 
 ---
@@ -69,7 +69,7 @@ flowchart TD
 | **LLM Framework** | [Rig](https://github.com/0xPlaygrounds/rig) (v0.44) | Modular LLM framework for agents, embeddings, loaders, and stores |
 | **LLM Host** | [Ollama](https://ollama.com/) | Local LLM runner exposing REST endpoints on port 11434 |
 | **Embedding Model** | `nomic-embed-text` | 768-dimensional text embeddings for semantic similarity search |
-| **Completion Model**| `tinyllama` | Lightweight completion model suitable for fast local inference |
+| **Completion Model**| `CyberCrew/notmythos-8b:latest` | Lightweight completion model suitable for fast local inference |
 | **Vector Store** | `InMemoryVectorStore` | Ephemeral in-memory vector index |
 | **Async Runtime** | Tokio (v1, full) | Multi-threaded asynchronous runtime |
 | **Serialization** | Serde / Serde JSON | Data serialization and deserialization |
@@ -102,7 +102,7 @@ security-rag/
 
 ```bash
 ollama pull nomic-embed-text
-ollama pull tinyllama
+ollama pull CyberCrew/notmythos-8b:latest
 ```
 
 *(Optional: You can also use other models such as `bge-m3`, `qwen2.5`, or `llama3.2` via environment variables).*
@@ -135,7 +135,7 @@ At startup, the application outputs:
 ```text
 Loaded 18 security chunks.
 Successfully generated embeddings
-Starting security RAG chatbot (completion model: tinyllama)...
+Starting security RAG chatbot (completion model: CyberCrew/notmythos-8b:latest)...
 >
 ```
 
@@ -176,11 +176,14 @@ Or run the compiled binary directly:
 ### Example Session
 
 ```text
-Loaded 5 security chunks.
+Loaded 11 security chunks.
 Successfully generated embeddings
-Starting security RAG chatbot (completion model: tinyllama)...
+Starting security RAG chatbot (completion model: CyberCrew/notmythos-8b:latest)...
 > What is SQL injection and how can we prevent it?
 SQL injection occurs when untrusted user input is sent directly to an interpreter as part of a database command. To prevent it, use parameterized queries, prepared statements, and ORMs rather than string concatenation.
+
+> Who are you?
+I'm Security RAG, a local cybersecurity research assistant. I'm here to provide practical advice and guidance on application security, vulnerabilities, and best practices.
 
 > exit
 ```
@@ -199,21 +202,21 @@ EMBED_MODEL=bge-m3 COMPLETION_MODEL=qwen2.5:7b cargo run
 ### Windows (PowerShell)
 ```powershell
 $env:EMBED_MODEL="nomic-embed-text"
-$env:COMPLETION_MODEL="tinyllama"
+$env:COMPLETION_MODEL="CyberCrew/notmythos-8b:latest"
 cargo run
 ```
 
 ### Windows (Command Prompt)
 ```cmd
 set EMBED_MODEL=nomic-embed-text
-set COMPLETION_MODEL=tinyllama
+set COMPLETION_MODEL=CyberCrew/notmythos-8b:latest
 cargo run
 ```
 
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
 | `EMBED_MODEL` | `nomic-embed-text` | Ollama model tag used for generating chunk embeddings |
-| `COMPLETION_MODEL` | `tinyllama` | Ollama model tag used by the RAG agent for answer synthesis |
+| `COMPLETION_MODEL` | `CyberCrew/notmythos-8b:latest` | Ollama model tag used by the RAG agent for answer synthesis |
 
 ---
 
@@ -237,8 +240,8 @@ fn load_pdf(path: &Path) -> Result<Vec<String>> {
 
 - **`Connection refused (os error 10061 / 111)`**:
   Ollama is not running. Start Ollama in the background or run `ollama serve`.
-- **`model 'nomic-embed-text' not found` or `model 'tinyllama' not found`**:
-  Make sure you pulled the models via `ollama pull nomic-embed-text` and `ollama pull tinyllama`.
+- **`model 'nomic-embed-text' not found` or `model 'CyberCrew/notmythos-8b:latest' not found`**:
+  Make sure you pulled the models via `ollama pull nomic-embed-text` and `ollama pull CyberCrew/notmythos-8b:latest`.
 - **`No content found in PDF file`**:
   Ensure the PDF contains selectable text (not scanned images/bitmaps requiring OCR).
 
