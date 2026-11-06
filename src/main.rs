@@ -1,23 +1,47 @@
 //! Simple security RAG agent built on the Rig framework.
-//! Uses a local Ollama server for embeddings (bge-m3 or nomic-embed-text) and completion (qwen3.5).
+//! Uses a local Ollama server for embeddings (embeddinggemma-2:440m) and completion (NotMythos).
 //! Reads security documents from the `docs/` folder (PDF or plain text) and answers questions.
 
 use anyhow::{Context, Result};
 use rig::integrations::cli_chatbot::ChatBotBuilder;
 use rig::prelude::*;
 use rig::providers::ollama::OllamaConfig;
-use rig::{
-    Embed, embeddings::EmbeddingsBuilder, loaders::PdfFileLoader,
-    vector_store::in_memory_store::InMemoryVectorStore,
-};
+use arrow_array::{ArrayRef, FixedSizeListArray, RecordBatch, StringArray, types::Float64Type};
+use rig::{Embed, embeddings::EmbeddingsBuilder, loaders::PdfFileLoader};
+use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
+
+const TABLE_NAME: &str = "security_docs";
 
 #[derive(Embed, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 struct Document {
     id: String,
     #[embed]
     content: String,
+}
+
+/// Converts embedded documents into an Arrow batch with `id`, `content` and `embedding` columns.
+fn as_record_batch(
+    records: Vec<(Document, Vec<rig::embeddings::Embedding>)>,
+    dims: usize,
+) -> Result<RecordBatch> {
+    let id = StringArray::from_iter_values(records.iter().map(|(d, _)| d.id.as_str()));
+    let content = StringArray::from_iter_values(records.iter().map(|(d, _)| d.content.as_str()));
+    let embedding = FixedSizeListArray::from_iter_primitive::<Float64Type, _, _>(
+        records.into_iter().map(|(_, e)| {
+            e.into_iter()
+                .next()
+                .map(|emb| emb.vec.into_iter().map(Some).collect::<Vec<_>>())
+        }),
+        dims as i32,
+    );
+    Ok(RecordBatch::try_from_iter(vec![
+        ("id", Arc::new(id) as ArrayRef),
+        ("content", Arc::new(content) as ArrayRef),
+        ("embedding", Arc::new(embedding) as ArrayRef),
+    ])?)
 }
 
 /// Splits text content into chunks of at most `chunk_size` characters along whitespace boundaries.
@@ -58,58 +82,73 @@ fn load_pdf(path: &Path) -> Result<Vec<String>> {
     Ok(content_chunks)
 }
 
+const DEFAULT_PREAMBLE: &str = "You are Security RAG, a local cybersecurity research assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context. Be direct, practical, and technical. Include impact, verification approach, and remediation. Cite relevant concepts when possible.";
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let client = OllamaConfig::new()
-        .with_base_url("http://localhost:11434")
-        .client();
+    // Load configuration from a .env file (if present); real env vars take precedence.
+    let _ = dotenvy::dotenv();
 
-    // Pick an embedding model available locally; prefer bge-m3, fall back to nomic-embed-text.
-    let embed_model_name = if std::env::var("EMBED_MODEL").is_ok() {
-        std::env::var("EMBED_MODEL").unwrap()
-    } else {
-        "nomic-embed-text".to_string()
-    };
+    let ollama_url =
+        std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
+    let client = OllamaConfig::new().with_base_url(&ollama_url).client();
+
+    let embed_model_name =
+        std::env::var("EMBED_MODEL").unwrap_or_else(|_| "embeddinggemma-2:440m".to_string());
     let completion_model_name = std::env::var("COMPLETION_MODEL")
         .unwrap_or_else(|_| "CyberCrew/notmythos-8b:latest".to_string());
+    let preamble = std::env::var("PREAMBLE").unwrap_or_else(|_| DEFAULT_PREAMBLE.to_string());
 
     let embedding_model = client.embedding(&embed_model_name, None).erase();
 
-    // Load security documents from ./docs (PDF glob) if present.
-    let docs_dir = std::env::current_dir()?.join("docs");
-    let mut chunks: Vec<String> = Vec::new();
-    if docs_dir.exists() {
-        if let Ok(pdf_chunks) = load_pdf(&docs_dir.join("*.pdf")) {
-            chunks.extend(pdf_chunks);
+    let db_path = std::env::var("LANCEDB_PATH").unwrap_or_else(|_| "data/lancedb".to_string());
+    let db = lancedb::connect(&db_path).execute().await?;
+
+    let table = if db.table_names().execute().await?.contains(&TABLE_NAME.to_string()) {
+        println!("Reusing existing LanceDB table '{TABLE_NAME}' at {db_path}.");
+        db.open_table(TABLE_NAME).execute().await?
+    } else {
+        // Load security documents from ./docs (PDF glob) if present.
+        let docs_dir = std::env::current_dir()?.join("docs");
+        let mut chunks: Vec<String> = Vec::new();
+        if docs_dir.exists() {
+            if let Ok(pdf_chunks) = load_pdf(&docs_dir.join("*.pdf")) {
+                chunks.extend(pdf_chunks);
+            }
         }
-    }
-    // Fall back to a small built-in security corpus so the agent always works.
-    if chunks.is_empty() {
-        chunks = vec![
-            "OWASP Top 10: Broken Access Control allows users to act outside intended permissions.".to_string(),
-            "SQL injection occurs when untrusted data is sent to an interpreter as part of a command.".to_string(),
-            "Cross-site scripting (XSS) lets attackers inject client-side scripts into web pages.".to_string(),
-            "Security misconfiguration is the most common vulnerability from insecure defaults.".to_string(),
-            "Sensitive data exposure happens when data is not properly protected in transit or at rest.".to_string(),
-        ];
-    }
-    println!("Loaded {} security chunks.", chunks.len());
+        // Fall back to a small built-in security corpus so the agent always works.
+        if chunks.is_empty() {
+            chunks = vec![
+                "OWASP Top 10: Broken Access Control allows users to act outside intended permissions.".to_string(),
+                "SQL injection occurs when untrusted data is sent to an interpreter as part of a command.".to_string(),
+                "Cross-site scripting (XSS) lets attackers inject client-side scripts into web pages.".to_string(),
+                "Security misconfiguration is the most common vulnerability from insecure defaults.".to_string(),
+                "Sensitive data exposure happens when data is not properly protected in transit or at rest.".to_string(),
+            ];
+        }
+        println!("Loaded {} security chunks.", chunks.len());
 
-    let mut builder = EmbeddingsBuilder::new(embedding_model.clone());
-    for (i, chunk) in chunks.into_iter().enumerate() {
-        builder = builder.document(Document {
-            id: format!("security_doc_{i}"),
-            content: chunk,
-        })?;
-    }
-    let embeddings = builder.build().await?;
-    println!("Successfully generated embeddings");
+        let mut builder = EmbeddingsBuilder::new(embedding_model.clone());
+        for (i, chunk) in chunks.into_iter().enumerate() {
+            builder = builder.document(Document {
+                id: format!("security_doc_{i}"),
+                content: chunk,
+            })?;
+        }
+        let embeddings = builder.build().await?;
+        println!("Successfully generated embeddings");
 
-    let vector_store = InMemoryVectorStore::from_documents(embeddings);
-    let index = vector_store.index(embedding_model);
+        let dims = embeddings[0].1[0].vec.len();
+        db.create_table(TABLE_NAME, vec![as_record_batch(embeddings, dims)?])
+            .execute()
+            .await?
+    };
+
+    let index =
+        LanceDbVectorIndex::new(table, embedding_model, "id", SearchParams::default()).await?;
 
     let rag_agent = AgentBuilder::new(client.completion(&completion_model_name))
-        .preamble("You are Security RAG, a local cybersecurity research assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context. Be direct, practical, and technical. Include impact, verification approach, and remediation. Cite relevant concepts when possible.")
+        .preamble(&preamble)
         .dynamic_context(2, index)
         .build();
 

@@ -21,8 +21,8 @@ flowchart TD
     end
 
     subgraph Embedding ["2. Embedding and Vector Indexing"]
-        D --> E["Ollama Embeddings (nomic-embed-text)"]
-        E --> F["InMemoryVectorStore"]
+        D --> E["Ollama Embeddings (embeddinggemma-2:440m)"]
+        E --> F["LanceDB table (data/lancedb)"]
         F --> G["Search Index"]
     end
 
@@ -48,11 +48,12 @@ flowchart TD
 
 3. **Vector Embeddings**:
    - Each chunk is converted into a `Document { id, content }` and batched into an `EmbeddingsBuilder`.
-   - Embeddings are generated locally via the Ollama `/api/embeddings` endpoint using `nomic-embed-text`.
+   - Embeddings are generated locally via the Ollama `/api/embeddings` endpoint using `embeddinggemma-2:440m`.
 
-4. **In-Memory Vector Store**:
-   - Embeddings and document payloads are held in RAM within an `InMemoryVectorStore`.
-   - A cosine similarity search index is constructed to serve context retrieval requests.
+4. **LanceDB Vector Store**:
+   - Embeddings and chunk text are stored in an on-disk [LanceDB](https://lancedb.com/) table (`security_docs`, columns `id`, `content`, `embedding`) under `data/lancedb` (override with `LANCEDB_PATH`).
+   - The table is wrapped by `rig-lancedb`'s `LanceDbVectorIndex` to serve similarity search for context retrieval.
+   - On later startups the existing table is reused, so documents are not re-read or re-embedded.
 
 5. **Security Agent & Interactive Chatbot**:
    - The RAG agent is instantiated with a security expert system preamble (`You are a security assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context...`).
@@ -66,11 +67,11 @@ flowchart TD
 | Component | Technology | Description |
 | :--- | :--- | :--- |
 | **Language** | Rust (2021 Edition) | High-performance, memory-safe systems language (`forbid(unsafe_code)`) |
-| **LLM Framework** | [Rig](https://github.com/0xPlaygrounds/rig) (v0.44) | Modular LLM framework for agents, embeddings, loaders, and stores |
+| **LLM Framework** | [Rig](https://github.com/0xPlaygrounds/rig) (v0.46) | Modular LLM framework for agents, embeddings, loaders, and stores |
 | **LLM Host** | [Ollama](https://ollama.com/) | Local LLM runner exposing REST endpoints on port 11434 |
-| **Embedding Model** | `nomic-embed-text` | 768-dimensional text embeddings for semantic similarity search |
+| **Embedding Model** | `embeddinggemma-2:440m` | Text embeddings for semantic similarity search |
 | **Completion Model**| `CyberCrew/notmythos-8b:latest` | Lightweight completion model suitable for fast local inference |
-| **Vector Store** | `InMemoryVectorStore` | Ephemeral in-memory vector index |
+| **Vector Store** | [LanceDB](https://lancedb.com/) via `rig-lancedb` (v0.46) | Persistent on-disk vector index (`data/lancedb`) |
 | **Async Runtime** | Tokio (v1, full) | Multi-threaded asynchronous runtime |
 | **Serialization** | Serde / Serde JSON | Data serialization and deserialization |
 | **Error Handling** | Anyhow | Context-rich error handling |
@@ -85,10 +86,12 @@ security-rag/
 │   └── *.pdf
 ├── src/
 │   └── main.rs             # Application entry point, chunking logic, and RAG pipeline
-├── Cargo.toml              # Crate manifest, dependencies (rig with pdf feature)
+├── data/lancedb/           # Generated LanceDB vector store (git-ignored)
+├── .env / .env.example     # Model, prompt and path configuration
+├── Cargo.toml              # Crate manifest, dependencies (rig, rig-lancedb, dotenvy)
 ├── Cargo.lock              # Reproducible dependency lockfile
 ├── progress-tracker.md     # Task progress tracker (ASD-STE100 format)
-├── .gitignore              # Ignores target/ build output and local artifacts
+├── .gitignore              # Ignores target/, data/ and .env
 └── README.md               # Complete project documentation and workflow guide
 ```
 
@@ -101,11 +104,14 @@ security-rag/
 3. **Pull Models**: Start Ollama and pull the required default models:
 
 ```bash
-ollama pull nomic-embed-text
+ollama pull embeddinggemma-2:440m
 ollama pull CyberCrew/notmythos-8b:latest
 ```
 
 *(Optional: You can also use other models such as `bge-m3`, `qwen2.5`, or `llama3.2` via environment variables).*
+
+4. **`protoc` (Protocol Buffers compiler)**: LanceDB's build requires it. Install it (e.g. `choco install protoc`, `brew install protobuf`, `apt install protobuf-compiler`) or download a release from <https://github.com/protocolbuffers/protobuf/releases> and set `PROTOC` to the binary path.
+5. **Disk space**: The first build compiles LanceDB/Arrow/DataFusion and needs several GB. If your system drive is low, point cargo elsewhere with `CARGO_TARGET_DIR` (e.g. `D:/cargo-target/security-rag`).
 
 ---
 
@@ -140,7 +146,7 @@ Starting security RAG chatbot (completion model: CyberCrew/notmythos-8b:latest).
 ```
 
 > [!NOTE]
-> Chunks and embeddings are stored in memory (`InMemoryVectorStore`). If you add or remove PDF files from `docs/`, restart the application with `cargo run` to re-chunk and re-embed.
+> Chunks and embeddings are persisted in LanceDB (`data/lancedb`). If you add or remove PDF files from `docs/`, or change `EMBED_MODEL`, delete the `data/lancedb` folder and restart with `cargo run` to re-chunk and re-embed. On a reused table the app prints `Reusing existing LanceDB table 'security_docs' ...` instead of the "Loaded N chunks" lines.
 
 ---
 
@@ -192,31 +198,33 @@ I'm Security RAG, a local cybersecurity research assistant. I'm here to provide 
 
 ## Configuration
 
-You can override the embedding or completion models at runtime using environment variables:
+Settings are read from a `.env` file in the project root (via the `dotenvy` crate). Copy the template and edit it:
 
-### Linux / macOS (Bash)
 ```bash
-EMBED_MODEL=bge-m3 COMPLETION_MODEL=qwen2.5:7b cargo run
+cp .env.example .env
 ```
 
-### Windows (PowerShell)
+Real environment variables take precedence over `.env`, so you can still override per run:
+
+```bash
+# Linux / macOS
+COMPLETION_MODEL=qwen2.5:7b cargo run
+```
 ```powershell
-$env:EMBED_MODEL="nomic-embed-text"
-$env:COMPLETION_MODEL="CyberCrew/notmythos-8b:latest"
-cargo run
-```
-
-### Windows (Command Prompt)
-```cmd
-set EMBED_MODEL=nomic-embed-text
-set COMPLETION_MODEL=CyberCrew/notmythos-8b:latest
-cargo run
+# Windows PowerShell
+$env:COMPLETION_MODEL="qwen2.5:7b"; cargo run
 ```
 
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
-| `EMBED_MODEL` | `nomic-embed-text` | Ollama model tag used for generating chunk embeddings |
+| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
+| `EMBED_MODEL` | `embeddinggemma-2:440m` | Ollama model tag used for generating chunk embeddings |
 | `COMPLETION_MODEL` | `CyberCrew/notmythos-8b:latest` | Ollama model tag used by the RAG agent for answer synthesis |
+| `PREAMBLE` | Security RAG system prompt | System prompt given to the agent |
+| `LANCEDB_PATH` | `data/lancedb` | Directory of the LanceDB vector store |
+
+> [!NOTE]
+> After changing `EMBED_MODEL`, delete `LANCEDB_PATH` so the store is rebuilt with the new model's vectors.
 
 ---
 
@@ -240,8 +248,11 @@ fn load_pdf(path: &Path) -> Result<Vec<String>> {
 
 - **`Connection refused (os error 10061 / 111)`**:
   Ollama is not running. Start Ollama in the background or run `ollama serve`.
-- **`model 'nomic-embed-text' not found` or `model 'CyberCrew/notmythos-8b:latest' not found`**:
-  Make sure you pulled the models via `ollama pull nomic-embed-text` and `ollama pull CyberCrew/notmythos-8b:latest`.
+- **`model 'embeddinggemma-2:440m' not found` or `model 'CyberCrew/notmythos-8b:latest' not found`**:
+  Make sure you pulled the models via `ollama pull embeddinggemma-2:440m` and `ollama pull CyberCrew/notmythos-8b:latest`.
+- **`Could not find protoc`** while building: install `protoc` or set the `PROTOC` environment variable (see Prerequisites).
+- **`There is not enough space on the disk` / `LNK1318`** while building: set `CARGO_TARGET_DIR` to a drive with several GB free.
+- **Stale or wrong search results after changing docs or `EMBED_MODEL`**: delete `data/lancedb` and restart.
 - **`No content found in PDF file`**:
   Ensure the PDF contains selectable text (not scanned images/bitmaps requiring OCR).
 

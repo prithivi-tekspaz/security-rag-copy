@@ -9,7 +9,11 @@ publish = false
 unsafe_code = "forbid"
 
 [dependencies]
-rig = { version = "0.44", features = ["derive", "pdf"] }
+rig = { version = "0.46", features = ["derive", "pdf"] }
 anyhow = "1"
+dotenvy = "0.15"
+rig-lancedb = "0.46"
+lancedb = { version = "0.30", default-features = false }
+arrow-array = "58"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
