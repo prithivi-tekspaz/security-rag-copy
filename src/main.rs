@@ -1,6 +1,5 @@
 //! Simple security RAG agent built on the Rig framework.
-//! Uses a local Ollama server for embeddings (embeddinggemma-2:440m) and completion (NotMythos).
-//! Reads security documents from the `docs/` folder (PDF or plain text) and answers questions.
+//! All runtime configuration (models, prompt, paths) is supplied through the environment / `.env`.
 
 use anyhow::{Context, Result};
 use rig::integrations::cli_chatbot::ChatBotBuilder;
@@ -11,9 +10,31 @@ use rig::{Embed, embeddings::EmbeddingsBuilder, loaders::PdfFileLoader};
 use rig_lancedb::{LanceDbVectorIndex, SearchParams};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use std::sync::Arc;
+use std::io::Write;
+use std::sync::{Arc, OnceLock};
 
-const TABLE_NAME: &str = "security_docs";
+static LOG_FILE: OnceLock<String> = OnceLock::new();
+
+/// Appends an error line (unix timestamp + message) to the file named by `LOG_FILE`.
+fn log_error(msg: &str) {
+    eprintln!("{msg}");
+    let Some(path) = LOG_FILE.get() else { return };
+    if let Some(dir) = Path::new(path).parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let _ = writeln!(f, "[{secs}] ERROR {msg}");
+    }
+}
+
+/// Reads a required setting from the environment (populated from `.env`).
+fn env(key: &str) -> Result<String> {
+    std::env::var(key).with_context(|| format!("missing required setting `{key}` (see .env.example)"))
+}
 
 #[derive(Embed, Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
 struct Document {
@@ -69,7 +90,7 @@ fn load_pdf(path: &Path) -> Result<Vec<String>> {
         .filter_map(|result| {
             result
                 .map_err(|e| {
-                    eprintln!("Error reading PDF content: {e}");
+                    log_error(&format!("Error reading PDF content: {e}"));
                     e
                 })
                 .ok()
@@ -82,31 +103,40 @@ fn load_pdf(path: &Path) -> Result<Vec<String>> {
     Ok(content_chunks)
 }
 
-const DEFAULT_PREAMBLE: &str = "You are Security RAG, a local cybersecurity research assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context. Be direct, practical, and technical. Include impact, verification approach, and remediation. Cite relevant concepts when possible.";
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Load configuration from a .env file (if present); real env vars take precedence.
     let _ = dotenvy::dotenv();
+    if let Ok(path) = std::env::var("LOG_FILE") {
+        let _ = LOG_FILE.set(path);
+    }
 
-    let ollama_url =
-        std::env::var("OLLAMA_BASE_URL").unwrap_or_else(|_| "http://localhost:11434".to_string());
-    let client = OllamaConfig::new().with_base_url(&ollama_url).client();
+    let result = run().await;
+    if let Err(e) = &result {
+        log_error(&format!("Fatal: {e:#}"));
+    }
+    result
+}
 
-    let embed_model_name =
-        std::env::var("EMBED_MODEL").unwrap_or_else(|_| "embeddinggemma-2:440m".to_string());
-    let completion_model_name = std::env::var("COMPLETION_MODEL")
-        .unwrap_or_else(|_| "CyberCrew/notmythos-8b:latest".to_string());
-    let preamble = std::env::var("PREAMBLE").unwrap_or_else(|_| DEFAULT_PREAMBLE.to_string());
+async fn run() -> Result<()> {
+
+    let client = OllamaConfig::new().with_base_url(&env("OLLAMA_BASE_URL")?).client();
+    let embed_model_name = env("EMBED_MODEL")?;
+    let completion_model_name = env("COMPLETION_MODEL")?;
+    let preamble = env("PREAMBLE")?;
+    let table_name = env("LANCEDB_TABLE")?;
+    let temperature: f64 = env("TEMPERATURE")?
+        .parse()
+        .context("`TEMPERATURE` must be a number")?;
 
     let embedding_model = client.embedding(&embed_model_name, None).erase();
 
-    let db_path = std::env::var("LANCEDB_PATH").unwrap_or_else(|_| "data/lancedb".to_string());
+    let db_path = env("LANCEDB_PATH")?;
     let db = lancedb::connect(&db_path).execute().await?;
 
-    let table = if db.table_names().execute().await?.contains(&TABLE_NAME.to_string()) {
-        println!("Reusing existing LanceDB table '{TABLE_NAME}' at {db_path}.");
-        db.open_table(TABLE_NAME).execute().await?
+    let table = if db.table_names().execute().await?.contains(&table_name) {
+        println!("Reusing existing vector store.");
+        db.open_table(&table_name).execute().await?
     } else {
         // Load security documents from ./docs (PDF glob) if present.
         let docs_dir = std::env::current_dir()?.join("docs");
@@ -139,7 +169,7 @@ async fn main() -> Result<()> {
         println!("Successfully generated embeddings");
 
         let dims = embeddings[0].1[0].vec.len();
-        db.create_table(TABLE_NAME, vec![as_record_batch(embeddings, dims)?])
+        db.create_table(&table_name, vec![as_record_batch(embeddings, dims)?])
             .execute()
             .await?
     };
@@ -149,10 +179,11 @@ async fn main() -> Result<()> {
 
     let rag_agent = AgentBuilder::new(client.completion(&completion_model_name))
         .preamble(&preamble)
+        .temperature(temperature)
         .dynamic_context(2, index)
         .build();
 
-    println!("Starting security RAG chatbot (completion model: {completion_model_name})...");
+    println!("Starting security RAG chatbot...");
     let chatbot = ChatBotBuilder::new().agent(rag_agent).max_turns(10).build();
     chatbot.run().await?;
 

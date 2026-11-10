@@ -56,7 +56,7 @@ flowchart TD
    - On later startups the existing table is reused, so documents are not re-read or re-embedded.
 
 5. **Security Agent & Interactive Chatbot**:
-   - The RAG agent is instantiated with a security expert system preamble (`You are a security assistant. Answer questions about application security, vulnerabilities, and best practices using the provided context...`).
+   - The RAG agent is instantiated with a system prompt supplied through the `PREAMBLE` setting.
    - For every question, the agent dynamically retrieves the top 2 most relevant context chunks and passes them to the completion model (`CyberCrew/notmythos-8b:latest` by default).
    - An interactive CLI session allows up to 10 turns of dialogue per execution.
 
@@ -141,12 +141,12 @@ At startup, the application outputs:
 ```text
 Loaded 18 security chunks.
 Successfully generated embeddings
-Starting security RAG chatbot (completion model: CyberCrew/notmythos-8b:latest)...
+Starting security RAG chatbot...
 >
 ```
 
 > [!NOTE]
-> Chunks and embeddings are persisted in LanceDB (`data/lancedb`). If you add or remove PDF files from `docs/`, or change `EMBED_MODEL`, delete the `data/lancedb` folder and restart with `cargo run` to re-chunk and re-embed. On a reused table the app prints `Reusing existing LanceDB table 'security_docs' ...` instead of the "Loaded N chunks" lines.
+> Chunks and embeddings are persisted in LanceDB (`data/lancedb`). If you add or remove PDF files from `docs/`, or change `EMBED_MODEL`, delete the `data/lancedb` folder and restart with `cargo run` to re-chunk and re-embed. On a reused table the app prints `Reusing existing vector store.` instead of the "Loaded N chunks" lines.
 
 ---
 
@@ -184,7 +184,7 @@ Or run the compiled binary directly:
 ```text
 Loaded 11 security chunks.
 Successfully generated embeddings
-Starting security RAG chatbot (completion model: CyberCrew/notmythos-8b:latest)...
+Starting security RAG chatbot...
 > What is SQL injection and how can we prevent it?
 SQL injection occurs when untrusted user input is sent directly to an interpreter as part of a database command. To prevent it, use parameterized queries, prepared statements, and ORMs rather than string concatenation.
 
@@ -217,11 +217,14 @@ $env:COMPLETION_MODEL="qwen2.5:7b"; cargo run
 
 | Variable | Default Value | Description |
 | :--- | :--- | :--- |
-| `OLLAMA_BASE_URL` | `http://localhost:11434` | Ollama server URL |
-| `EMBED_MODEL` | `embeddinggemma-2:440m` | Ollama model tag used for generating chunk embeddings |
-| `COMPLETION_MODEL` | `CyberCrew/notmythos-8b:latest` | Ollama model tag used by the RAG agent for answer synthesis |
-| `PREAMBLE` | Security RAG system prompt | System prompt given to the agent |
-| `LANCEDB_PATH` | `data/lancedb` | Directory of the LanceDB vector store |
+| `OLLAMA_BASE_URL` | _(required)_ | Ollama server URL |
+| `EMBED_MODEL` | _(required)_ | Ollama model tag used for generating chunk embeddings |
+| `COMPLETION_MODEL` | _(required)_ | Ollama model tag used by the RAG agent for answer synthesis |
+| `PREAMBLE` | _(required)_ | System prompt given to the agent |
+| `LOG_FILE` | optional | File where errors are appended with a unix timestamp (e.g. `logs/errors.log`); errors are always also printed to the console |
+| `TEMPERATURE` | _(required)_ | Sampling temperature for the LLM (e.g. `0.3`; lower is more consistent) |
+| `LANCEDB_TABLE` | _(required)_ | Table name inside the vector store |
+| `LANCEDB_PATH` | _(required)_ | Directory of the LanceDB vector store |
 
 > [!NOTE]
 > After changing `EMBED_MODEL`, delete `LANCEDB_PATH` so the store is rebuilt with the new model's vectors.
@@ -246,6 +249,7 @@ fn load_pdf(path: &Path) -> Result<Vec<String>> {
 
 ## Troubleshooting
 
+- **Where are the logs?**: Errors are appended to the file named by `LOG_FILE` (default in `.env.example`: `logs/errors.log`). View with `Get-Content logs\errors.log -Tail 50` (PowerShell) or `tail -n 50 logs/errors.log`.
 - **`Connection refused (os error 10061 / 111)`**:
   Ollama is not running. Start Ollama in the background or run `ollama serve`.
 - **`model 'embeddinggemma-2:440m' not found` or `model 'CyberCrew/notmythos-8b:latest' not found`**:
